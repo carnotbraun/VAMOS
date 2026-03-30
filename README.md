@@ -1,291 +1,113 @@
-# VAMOS - Vehicular Agent for Multi-objective Optimization and Semantics
+# VAMOS: Agente Híbrido para Planejamento de Rotas Veiculares Cientes de Contexto Semântico
 
-## Visão Geral
+**Resumo do Artefato:** Este repositório disponibiliza o código-fonte, dados e scripts de avaliação (benchmarks) necessários para instalar e reproduzir o sistema VAMOS (*Vehicular Agent for Multi-objective Optimization and Semantics*). O VAMOS é um agente híbrido que acopla *Small Language Models* (SLMs) locais para raciocínio semântico a algoritmos de grafos clássicos para otimização espacial, viabilizando o roteamento veicular com base em intenções humanas complexas.
 
-**VAMOS** (Vehicular Agent for Multi-objective Optimization and Semantics) é um sistema avançado de roteamento inteligente que integra Modelos de Linguagem de Grande Escala (LLMs) para planejamento contextual de rotas urbanas. O sistema combina processamento de linguagem natural, otimização de grafos e dados geoespaciais do OpenStreetMap para gerar rotas personalizadas que consideram múltiplas tarefas, preferências do usuário e contextos dinâmicos.
+**Resumo do Artigo:** Sistemas de navegação tradicionais priorizam a eficiência métrica, como tempo ou distância, mas falham frequentemente na interpretação de intenções humanas complexas e dependentes do contexto. Embora os Grandes Modelos de Linguagem (LLMs) demonstrem potencial para preencher essa lacuna semântica, sua integração direta em Sistemas de Transporte Inteligentes (ITS) enfrenta barreiras críticas de escalabilidade, latência e dependência de conectividade. Para superar esses desafios, este trabalho apresenta o VAMOS (Vehicular Agent for Multi-objective Optimization and Semantics), um agente híbrido desenhado para operar eficientemente embarcado. O VAMOS desacopla o raciocínio semântico da otimização espacial, combinando Pequenos Modelos de Linguagem (SLMs) locais para a interpretação de intenções com algoritmos de grafos clássicos para a execução de rotas. A avaliação experimental em três cenários urbanos demonstra que o VAMOS atinge acurácia e completude superiores a 91% utilizando modelos compactos. Além disso, os resultados evidenciam um trade-off favorável: embora modelos massivos apresentem um ganho marginal de qualidade (~3%), o VAMOS oferece uma redução significativa no overhead computacional e de comunicação, validando a viabilidade de assistentes de navegação semanticamente conscientes.
 
-### Características Principais
+# Estrutura do readme.md
 
-- **Planejamento Multi-Tarefa**: Processa múltiplas tarefas em linguagem natural e as incorpora ao planejamento de rota
-- **Classificação Inteligente**: Utiliza LLMs para classificar tarefas por importância e extrair tags OSM relevantes automaticamente
-- **Otimização TSP**: Resolve o Problema do Caixeiro Viajante para determinar a ordem ótima de visita aos POIs (Points of Interest)
-- **Suporte Multi-Modelo**: Compatível com Ollama (local), HuggingFace e OpenAI
-- **Análise Contextual**: Considera horário, tráfego, clima e preferências do usuário
-- **Visualização Geográfica**: Gera mapas de alta qualidade das rotas otimizadas
+A documentação está estruturada para orientar o processo de avaliação, contendo:
+1. Selos pretendidos.
+2. Informações básicas de hardware e software.
+3. Dependências do sistema.
+4. Preocupações de segurança.
+5. Instruções de instalação.
+6. Teste mínimo de funcionalidade.
+7. Guias de reprodução dos experimentos/reivindicações do artigo.
+8. Licença.
 
-## Arquitetura do Sistema
+A arquitetura do projeto reflete-se na seguinte estrutura de diretórios:
+- `/src`: Módulos centrais (App, Motor de Roteamento, Agente LLM e Geo-Utils).
+- `/utils`: Ferramentas de benchmarking e geradores de cenários.
+- `/mapas`: Saídas visuais das rotas geradas (e utilitários).
+- `/graph_data`: (Gerado na execução) Cache e persistência das malhas viárias.
 
-O sistema é composto por quatro componentes principais:
+# Selos Considerados
 
-```
-┌─────────────────┐
-│   LLM Agent     │  → Classificação de tarefas e extração de POI tags
-└────────┬────────┘
-         │
-┌────────▼────────┐
-│ Context Engine  │  → Contexto do usuário e cenário (tempo, tráfego)
-└────────┬────────┘
-         │
-┌────────▼────────┐
-│ Routing Engine  │  → Cálculo de rotas e otimização TSP
-└────────┬────────┘
-         │
-┌────────▼────────┐
-│  Graph Utils    │  → Gerenciamento de grafos OSM e POIs
-└─────────────────┘
-```
+Os selos considerados para avaliação são: **Artefatos Disponíveis (SeloD)**, **Artefatos Funcionais (SeloF)**, **Artefatos Sustentáveis (SeloS)** e **Experimentos Reprodutíveis (SeloR)**.
 
-### Componentes
+# Informações básicas
 
-#### 1. **LLM Agent** ([llm_agent.py](src/llm_agent.py))
-Responsável pela interação com modelos de linguagem:
-- Classifica tarefas em linguagem natural
-- Extrai tags OSM relevantes para cada tarefa
-- Avalia rotas candidatas considerando contexto
-- Suporta três backends: Ollama, HuggingFace, OpenAI
+O sistema foi concebido para execução local (borda/embarcado), visando minimizar a latência e a dependência de rede.
+- **Sistema Operacional:** Linux (Ubuntu 20.04/22.04 LTS) ou MacOs.
+- **Hardware Mínimo:** Processador multi-core, 16 GB de RAM, 10 GB de armazenamento.
+- **Hardware Recomendado:** Placa gráfica (GPU) com arquitetura NVIDIA (suporte a CUDA) e um mínimo de 8GB de VRAM para a execução eficiente do modelo SLM (`Qwen3-4B`) sem offload para disco.
+- **Ambiente de Execução:** Python 3.10.
 
-#### 2. **Context Engine** ([context_engine.py](src/context_engine.py))
-Fornece informações contextuais para a tomada de decisão:
-- Preferências do usuário (rotas mais seguras, evitar áreas, etc.)
-- Contexto temporal (hora do dia, dia da semana)
-- Condições dinâmicas (tráfego, clima)
+# Dependências
 
-#### 3. **Routing Engine** ([routing_engine.py](src/routing_engine.py))
-Motor de cálculo de rotas:
-- Conversão de endereços para nós do grafo
-- Cálculo de caminhos mais curtos (Dijkstra)
-- Otimização de múltiplas paradas (TSP brute-force)
-- Suporte a pesos customizados (tempo de viagem, distância)
+Para a execução deste artefato, requer-se a instalação dos seguintes componentes:
+- **Sistema:** `git`, `curl`.
+- **Bibliotecas Python principais (ver `requirements.txt`):** `osmnx` (grafos), `networkx` (algoritmos), `geopandas`/`pandas`, `matplotlib`, `outlines`, `ollama` e `transformers`.
 
-#### 4. **Graph Utils** ([graph_utils.py](src/graph_utils.py))
-Gerenciamento de dados geoespaciais:
-- Download e cache de grafos OSM
-- Extração e cache de POIs
-- Projeção de coordenadas para cálculos precisos
+*(Opcional)*: Chaves de API para OpenAI podem ser passadas via variável de ambiente.
 
-## Instalação
+# Preocupações com segurança
 
-### Requisitos
-- Python 3.8+
-- CUDA (opcional, para HuggingFace com GPU)
-- Ollama (opcional, para execução local)
+A execução do artefato não apresenta riscos para o hardware do avaliador. O sistema efetua downloads pontuais das redes viárias através da API pública do OpenStreetMap, necessitando de acesso à internet na primeira execução de um cenário urbano inédito. Caso o avaliador utilize *tokens* de API pagos (ex: OpenAI) para testes avulsos, adverte-se para que não os adicione permanentemente ao código fonte para prevenir exposições acidentais em *commits*.
 
-### Configuração
+# Instalação
+
+O processo de instalação configura o ambiente virtual e prepara o motor de inferência local.
 
 1. Clone o repositório:
 ```bash
-git clone <repository_url>
+git clone https://github.com/carnotbraun/VAMOS
 cd VAMOS
 ```
 
-2. Instale as dependências:
+2. Configure o ambiente virtual e as dependências:
 ```bash
+python3 -m venv env
+source env/bin/activate
 pip install -r requirements.txt
 ```
 
-3. (Opcional) Configure o Ollama para execução local:
+3. Instale o serviço Ollama e transfira o modelo base do artigo (Qwen):
 ```bash
-ollama pull llama3
+curl -fsSL https://ollama.com/install.sh | sh
+ollama serve &  
+ollama pull qwen:4b
 ```
 
-4. (Opcional) Configure a API OpenAI:
-```bash
-export OPENAI_API_KEY="sua-chave-api"
-```
+# Teste mínimo
 
-## Uso
+O teste mínimo assegura que as bibliotecas espaciais, as projeções geográficas e a comunicação local com o modelo de linguagem estão devidamente configuradas.
 
-### Linha de Comando
-
-O sistema é executado via linha de comando com os seguintes parâmetros:
-
-```bash
-python src/app.py \
-  --method [ollama|hf|openai] \
-  --origem "Endereço de origem" \
-  --destino "Endereço de destino" \
-  --tarefas "tarefa 1" "tarefa 2" "tarefa N"
-```
-
-### Exemplos Práticos
-
-#### Exemplo 1: Rota com compras
+**Procedimento:**
+No terminal, com o ambiente ativado:
 ```bash
 python src/app.py \
   --method ollama \
-  --origem "Rua Reitor Lafayete, Campinas" \
-  --destino "Shopping Iguatemi, Campinas" \
-  --tarefas "comprar remédios" "comprar pão"
+  --origem "Avenida Paulista, São Paulo" \
+  --destino "Parque Ibirapuera, São Paulo" \
+  --tarefas "preciso de combustivel urgente"
 ```
 
-#### Exemplo 2: Rota de emergência
+**Resultado Esperado:**
+O sistema fará o download do polígono viário do OpenStreetMap (pode demorar 1-2 minutos na primeira vez, ficando posteriormente em cache). O log exibirá o Agente identificando "combustível" como prioridade máxima (Importância 10), o motor de rotas resolverá o Problema do Caixeiro Viajante (TSP) para inserir um posto de abastecimento, e uma imagem `rota_final.png` será gerada destacando a trajetória ótima na raiz do projeto.
+
+# Experimentos
+
+Esta secção descreve os passos para a obtenção dos resultados cruciais apresentados no artigo.
+
+## Reivindicação #1: Alta Acurácia e Completude na Execução Local
+O artigo argumenta (Tabela 2) que o modelo compacto `Qwen3-4B` processando localmente alcança mais de 91% de eficácia ao interpretar intenções humanas perante cenários topológicos e decidir sobre desvios semânticos (Urgência vs. Conveniência).
+
+1. **Configuração:** Garanta que possui o Ollama ativo e as dependências instaladas, ou que vai fazer o uso do modelo extraido do HF, considere os que já estão comentados no código principal.
+2. **Execução:** O ficheiro `bench.py` processará automaticamente dezenas de cenários espacialmente verificados. 
 ```bash
-python src/app.py \
-  --method openai \
-  --origem "-22.90,47.06" \
-  --destino "-22.88,47.04" \
-  --tarefas "preciso abastecer urgente" "ir ao hospital"
+python utils/bench.py
 ```
+3. **Recursos e Duração:** Dependendo da capacidade da GPU do avaliador, o teste completo consome entre 30 a 50 minutos. Serão utilizados ~4GB de RAM para instanciar o grafo da metrópole e ~5GB de VRAM para a inferência local da LLM.
+4. **Resultado Esperado:** O script gera o log completo e o ficheiro sumário `benchmark_summary_report.txt`. Neste último, nas secções de "Performance Cognitiva", os valores consolidados de *Precision* (escolha da rota certa) e *Completeness* (intenção adequada) corroborarão o padrão superior a 90% atestado no artigo, considerando as margens naturais de não-determinismo probabilístico dos modelos autoregressivos.
 
-#### Exemplo 3: Rota de lazer
-```bash
-python src/app.py \
-  --method hf \
-  --origem "Centro, Campinas" \
-  --destino "Parque Portugal, Campinas" \
-  --tarefas "visitar um parque" "tomar café"
-```
+## Reivindicação #2: Redução de Overhead de Comunicação (Estabilidade)
+O artigo defende (Tabela 3) que a adoção de SLMs locais oferece um *overhead* fim-a-fim estável comparativamente a instâncias em nuvem que dependem das instabilidades e latências associadas à rede móvel veicular.
 
-### Parâmetros
+1. **Execução:** Esta métrica é extraída como subproduto da execução da Reivindicação #1. Não há ação extra requerida.
+2. **Resultado Esperado:** Analisando os tempos na tabela de "DETALHE POR CATEGORIA" dentro de `benchmark_summary_report.txt`, observar-se-ão os valores de `Avg_Time`. Os tempos reportados atestarão estabilidade absoluta por iteração, operando os processos de Geração, Enriquecimento e Avaliação puramente *offline*, blindando o sistema veicular contra anomalias na conectividade de rede (Jitter/Loss).
 
-| Parâmetro | Tipo | Obrigatório | Descrição |
-|-----------|------|-------------|-----------|
-| `--method` | String | Não | Backend do LLM: `ollama`, `hf` ou `openai` (padrão: `ollama`) |
-| `--origem` | String | Sim | Endereço ou coordenadas (lat,lon) de origem |
-| `--destino` | String | Sim | Endereço ou coordenadas (lat,lon) de destino |
-| `--tarefas` | Lista | Não | Lista de tarefas em linguagem natural |
-| `--force_download` | Flag | Não | Força re-download de grafos e POIs (ignora cache) |
+# LICENSE
 
-## Fluxo de Execução
-
-1. **Carregamento de Dados**
-   - Carrega ou baixa o grafo OSM da região
-   - Carrega ou extrai POIs relevantes
-   - Projeta dados para cálculos métricos precisos
-
-2. **Processamento de Tarefas**
-   - LLM classifica cada tarefa por importância (1-10)
-   - Extrai tags OSM relevantes para cada tarefa
-   - Ordena tarefas por prioridade
-
-3. **Geração de Rotas Candidatas**
-   - **Rota Direta**: Caminho mais curto sem paradas
-   - **Rota Multi-tarefa**: Incorpora POIs das tarefas
-     - Identifica POIs relevantes próximos à rota
-     - Otimiza ordem de visita (TSP)
-     - Calcula rota completa
-
-4. **Avaliação e Decisão**
-   - LLM avalia rotas considerando:
-     - Tempo total de viagem
-     - Número de tarefas completadas
-     - Contexto (tráfego, horário, preferências)
-   - Seleciona rota ótima e justifica a decisão
-
-5. **Visualização**
-   - Gera mapa de alta resolução (300 DPI)
-   - Destaca rota em vermelho
-   - Marca POIs visitados em azul
-   - Salva como `rota_final.png`
-
-## Modelos Suportados
-
-### HuggingFace
-- **Qwen3-4B** (baseline)
-- Qwen3-0.6B, Qwen3-1.7B, Qwen3-8B
-- LFM2.5-1.2B-Instruct
-- Mistral-7B-Instruct
-- Phi-3.5-mini-instruct
-- Meta-Llama-3.1-8B-Instruct
-
-### Ollama
-- llama3
-- mistral
-- phi3
-
-### OpenAI
-- gpt-3.5-turbo
-- gpt-4-turbo-preview
-- gpt-4o
-
-## Estrutura do Projeto
-
-```
-VAMOS/
-├── src/
-│   ├── app.py              # Aplicação principal
-│   ├── llm_agent.py        # Interface com LLMs
-│   ├── context_engine.py   # Gerenciamento de contexto
-│   ├── routing_engine.py   # Motor de roteamento
-│   └── graph_utils.py      # Utilitários de grafos
-├── utils/
-│   ├── bench.py            # Script de benchmarking
-│   ├── explore_nodes.py    # Exploração de nós
-│   └── scenario_generator.py # Gerador de cenários
-├── notebook/
-│   └── plots.ipynb         # Análises e visualizações
-├── benchmark_logs/         # Logs de experimentos
-├── graph_data/             # Cache de grafos OSM
-├── mapas/                  # Mapas gerados
-├── requirements.txt        # Dependências Python
-└── README.md              # Este arquivo
-```
-
-## Detalhes Técnicos
-
-### Otimização TSP
-O sistema resolve o TSP (Traveling Salesman Problem) para múltiplas paradas usando:
-- Enumeração exaustiva via permutações (para n ≤ 10 POIs)
-- Matriz de distâncias pré-calculada
-- Validação de conectividade entre todos os nós
-
-### Seleção de POIs
-POIs são selecionados por proximidade à rota direta:
-1. Projeta grafo e POIs para sistema métrico
-2. Constrói LineString da rota direta
-3. Calcula distância de cada POI à linha
-4. Seleciona POI mais próximo para cada tarefa
-
-### Structured Output
-O LLM é configurado para gerar outputs estruturados via Pydantic:
-```python
-class Task(BaseModel):
-    task: str
-    importance: int  # 1-10
-    poi_tags: Dict   # OSM tags
-```
-
-Isso garante outputs parseáveis e previne alucinações.
-
-## Limitações Conhecidas
-
-- **Escalabilidade TSP**: Tempo exponencial para n > 10 POIs
-- **Geocodificação**: Dependente de APIs externas (pode falhar offline)
-- **Contexto Dinâmico**: Dados de tráfego e clima são simulados (mock)
-- **Cache Local**: Requer re-download para regiões não cachadas
-
-## Trabalhos Futuros
-
-- [ ] Implementar heurísticas TSP (Christofides, 2-opt)
-- [ ] Integração com APIs de tráfego real (Google, TomTom)
-- [ ] Suporte a múltiplos modos de transporte
-- [ ] Interface web/móvel
-- [ ] Aprendizado por reforço para preferências
-
-## Citação
-
-Se você utilizar este sistema em sua pesquisa, por favor cite:
-
-```bibtex
-@article{vamos2026,
-  title={VAMOS: Versatile Agent for Multimodal Optimization of Streets},
-  author={[Seu Nome]},
-  journal={[Nome da Conferência/Journal]},
-  year={2026}
-}
-```
-
-## Licença
-
-[Adicione informações de licença]
-
-## Contato
-
-[Adicione informações de contato]
-
-## Agradecimentos
-
-Este projeto utiliza:
-- [OSMnx](https://github.com/gboeing/osmnx) para dados do OpenStreetMap
-- [Outlines](https://github.com/outlines-dev/outlines) para structured generation
-- [Ollama](https://ollama.ai/) para execução local de LLMs
+Este projeto é distribuído sob a licença MIT. Para mais detalhes e permissões de replicação, consulte o ficheiro `LICENSE` na raiz do repositório.

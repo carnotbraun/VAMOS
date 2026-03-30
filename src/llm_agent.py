@@ -10,7 +10,6 @@ import torch
 from accelerate import disk_offload
 import openai
 
-#os.environ['CUDA_VISIBLE_DEVICES'] = '3'
 
 class Task(BaseModel):
     task: str

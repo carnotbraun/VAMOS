@@ -9,7 +9,7 @@ import pandas as pd # Necessário para a análise por categoria
 os.environ['CUDA_VISIBLE_DEVICES'] = '7'
 
 # --- CONFIGURAÇÕES ---
-CONTEXT_ENGINE_PATH = "context_engine.py" 
+CONTEXT_ENGINE_PATH = "src/context_engine.py" 
 LOG_DIRECTORY = "benchmark_logs" 
 RUNS_PER_SCENARIO = 3
 
@@ -452,7 +452,7 @@ def run_benchmark():
                 # Usa formato --origem=valor para evitar que números negativos sejam interpretados como flags
                 origin = scen["origin"].replace(", ", ",")
                 destination = scen["destination"].replace(", ", ",")
-                cmd = [python_exec, "app.py",
+                cmd = [python_exec, "src/app.py",
                        f"--origem={origin}",
                        f"--destino={destination}",
                        f"--method={method}"]

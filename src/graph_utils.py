@@ -4,7 +4,8 @@ import geopandas as gpd
 import warnings
 
 # --- CONFIGURAÇÕES ---
-PATH = 'VAMOS/graph_data/SP/'
+PATH = '../graph_data/SP/'
+os.makedirs(PATH, exist_ok=True)
 LOCATION = "São Paulo, Brazil" # Você pode mudar isso dinamicamente ou via config
 GRAPH_FILENAME = f"{PATH}{LOCATION.split(',')[0].lower()}_drive_graph.graphml"
 POI_FILENAME = f"{PATH}{LOCATION.split(',')[0].lower()}_pois.gpkg"
