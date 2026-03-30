@@ -2,7 +2,7 @@
 
 **Resumo do Artigo:** Sistemas de navegação tradicionais priorizam a eficiência métrica, como tempo ou distância, mas falham frequentemente na interpretação de intenções humanas complexas e dependentes do contexto. Embora os Grandes Modelos de Linguagem (LLMs) demonstrem potencial para preencher essa lacuna semântica, sua integração direta em Sistemas de Transporte Inteligentes (ITS) enfrenta barreiras críticas de escalabilidade, latência e dependência de conectividade. Para superar esses desafios, este trabalho apresenta o VAMOS (Vehicular Agent for Multi-objective Optimization and Semantics), um agente híbrido desenhado para operar eficientemente embarcado. O VAMOS desacopla o raciocínio semântico da otimização espacial, combinando Pequenos Modelos de Linguagem (SLMs) locais para a interpretação de intenções com algoritmos de grafos clássicos para a execução de rotas. A avaliação experimental em três cenários urbanos demonstra que o VAMOS atinge acurácia e completude superiores a 91% utilizando modelos compactos. Além disso, os resultados evidenciam um trade-off favorável: embora modelos massivos apresentem um ganho marginal de qualidade (~3%), o VAMOS oferece uma redução significativa no overhead computacional e de comunicação, validando a viabilidade de assistentes de navegação semanticamente conscientes.
 
-![](framework.png)
+![](VAMOS.png)
 
 # Estrutura do readme.md
 
@@ -90,6 +90,8 @@ O sistema fará o download do polígono viário do OpenStreetMap (pode demorar 1
 # Experimentos
 
 Esta secção descreve os passos para a obtenção dos resultados cruciais apresentados no artigo.
+
+Nota: O script de benchmark fornecido neste repositório está configurado por padrão para reproduzir o dataset de São Paulo. Para avaliar Salvador ou Belém, altere a variável LOCATION no arquivo src/graph_utils.py e execute o benchmark novamente.
 
 ## Reivindicação #1: Alta Acurácia e Completude na Execução Local
 O artigo argumenta (Tabela 2) que o modelo compacto `Qwen3-4B` processando localmente alcança mais de 91% de eficácia ao interpretar intenções humanas perante cenários topológicos e decidir sobre desvios semânticos (Urgência vs. Conveniência).
