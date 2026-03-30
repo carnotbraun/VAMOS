@@ -30,8 +30,6 @@ OPENAI_MODEL_NAME = "gpt-3.5-turbo"  # Modelo OpenAI API
 #OPENAI_MODEL_NAME = "gpt-4-turbo-preview"  # GPT-4 (mais caro)
 #OPENAI_MODEL_NAME = "gpt-4o"  # GPT-4 Optimized
 
-os.environ['CUDA_VISIBLE_DEVICES'] = '7'
-
 def plot_final_route(router: RoutingEngine, path: list, pois_info: list, output_filename="rota_final.png"):
     """
     Plota a rota final usando as funcionalidades nativas e mais robustas do OSMnx.
