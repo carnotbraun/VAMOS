@@ -75,10 +75,10 @@ ollama pull qwen:4b
 O teste mínimo assegura que as bibliotecas espaciais, as projeções geográficas e a comunicação local com o modelo de linguagem estão devidamente configuradas.
 
 **Procedimento:**
-No terminal, com o ambiente ativado:
+No terminal, com o ambiente ativado, você pode escolher qualquer um dos métodos para avaliação, principalmente os do hf:
 ```bash
 python src/app.py \
-  --method ollama \
+  --method hf \
   --origem "Avenida Paulista, São Paulo" \
   --destino "Parque Ibirapuera, São Paulo" \
   --tarefas "preciso de combustivel urgente"
