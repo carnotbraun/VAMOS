@@ -79,10 +79,10 @@ No terminal, com o ambiente ativado, você pode escolher qualquer um dos método
 1. Utilizando coordenadas:
 ```bash
 python3 src/app.py \
---origem -23.526038, -46.696681 \
---destino -23.520683, -46.679893 \
+--origem '-23.526038, -46.696681' \
+--destino '-23.520683, -46.679893' \
 --method hf \
---tarefas I need to go to a fuel
+--tarefas 'I need to go to a fuel'
 ```
 
 2. Utilizando pontos mais subjetivos no mapa:
