@@ -14,16 +14,11 @@ LOG_DIRECTORY = "benchmark_logs"
 RUNS_PER_SCENARIO = 3
 
 # Método padrão para o benchmark. Importante:
-# - 'hf' atualmente retorna objetos Pydantic via Outlines no llm_agent.py, e o app.py tenta fazer json.loads
-#   direto, o que pode resultar em NO_LLM por falha de parse.
-# - 'ollama' retorna JSON string e tende a ser o caminho mais estável para avaliação.
-# - 'openai' usa a API da OpenAI (requer OPENAI_API_KEY definida no ambiente)
 DEFAULT_LLM_METHOD = "hf"
 
 # Arquivo para salvar todo o output do terminal
 FULL_LOG_FILE = f"benchmark_full_execution_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
 
-# --- CLASSE PARA SALVAR O TERMINAL NO TXT ---
 class DualLogger:
     """Duplica o output: imprime na tela e salva no arquivo ao mesmo tempo."""
     def __init__(self, filepath):

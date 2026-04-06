@@ -29,7 +29,7 @@ Os selos considerados para avaliação são: **Artefatos Disponíveis (SeloD)**,
 # Informações básicas
 
 O sistema foi concebido para execução local (borda/embarcado), visando minimizar a latência e a dependência de rede.
-- **Sistema Operacional:** Linux (Ubuntu 20.04/22.04 LTS) ou MacOs.
+- **Sistema Operacional:** Linux (Ubuntu 20.04/22.04 LTS) ou MacOs(Para o método Ollama).
 - **Hardware Mínimo:** Processador multi-core, 16 GB de RAM, 10 GB de armazenamento.
 - **Hardware Recomendado:** Placa gráfica (GPU) com arquitetura NVIDIA (suporte a CUDA) e um mínimo de 8GB de VRAM para a execução eficiente do modelo SLM (`Qwen3-4B`) sem offload para disco.
 - **Ambiente de Execução:** Python 3.10.
@@ -44,7 +44,7 @@ Para a execução deste artefato, requer-se a instalação dos seguintes compone
 
 # Preocupações com segurança
 
-A execução do artefato não apresenta riscos para o hardware do avaliador. O sistema efetua downloads pontuais das redes viárias através da API pública do OpenStreetMap, necessitando de acesso à internet na primeira execução de um cenário urbano inédito. Caso o avaliador utilize *tokens* de API pagos (ex: OpenAI) para testes avulsos, adverte-se para que não os adicione permanentemente ao código fonte para prevenir exposições acidentais em *commits*.
+A execução do artefato não apresenta riscos para o hardware do avaliador. O sistema efetua downloads pontuais das redes viárias através da API pública do OpenStreetMap, necessitando de acesso à internet na primeira execução de um cenário urbano inédito, assim como a obtenção dos modelos do próprio HF. Caso o avaliador utilize *tokens* de API pagos (ex: OpenAI) para testes avulsos, adverte-se para que não os adicione permanentemente ao código fonte para prevenir exposições acidentais em *commits*.
 
 # Instalação
 
@@ -63,7 +63,7 @@ source env/bin/activate
 pip install -r requirements.txt
 ```
 
-3. Instale o serviço Ollama e transfira o modelo base do artigo (Qwen):
+3(Opcional para o método ollama). Instale o serviço Ollama e transfira o modelo base do artigo (Qwen):
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
 ollama serve &  
@@ -76,6 +76,16 @@ O teste mínimo assegura que as bibliotecas espaciais, as projeções geográfic
 
 **Procedimento:**
 No terminal, com o ambiente ativado, você pode escolher qualquer um dos métodos para avaliação, principalmente os do hf:
+1. Utilizando coordenadas:
+```bash
+python3 src/app.py \
+--origem -23.526038, -46.696681 \
+--destino -23.520683, -46.679893 \
+--method hf \
+--tarefas I need to go to a fuel
+```
+
+2. Utilizando pontos mais subjetivos no mapa:
 ```bash
 python src/app.py \
   --method hf \
@@ -85,7 +95,7 @@ python src/app.py \
 ```
 
 **Resultado Esperado:**
-O sistema fará o download do polígono viário do OpenStreetMap (pode demorar 1-2 minutos na primeira vez, ficando posteriormente em cache). O log exibirá o Agente identificando "combustível" como prioridade máxima (Importância 10), o motor de rotas resolverá o Problema do Caixeiro Viajante (TSP) para inserir um posto de abastecimento, e uma imagem `rota_final.png` será gerada destacando a trajetória ótima na raiz do projeto.
+O sistema fará o download do polígono viário do OpenStreetMap (pode demorar 3-4 minutos na primeira vez, ficando posteriormente em cache), dos POIs do cenário desejado (1-2 minutos) e por fim o modelo utilizado. O log exibirá o Agente identificando "combustível" como prioridade máxima (Importância 10), o motor de rotas resolverá o Problema do Caixeiro Viajante (TSP) para inserir um posto de abastecimento, e uma imagem `rota_final.png` será gerada destacando a trajetória ótima na raiz do projeto.
 
 # Experimentos
 
