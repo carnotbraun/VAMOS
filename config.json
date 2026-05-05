@@ -2,7 +2,7 @@
   "llm": {
     "default_method": "hf",
     "hf_model": "Qwen/Qwen3-4B",
-    "ollama_model": "qwen:4b",
+    "ollama_model": "qwen3:4b",
     "openai_model": "gpt-3.5-turbo"
   },
   "routing": {

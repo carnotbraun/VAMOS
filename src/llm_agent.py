@@ -75,10 +75,16 @@ class LLMAgent:
 
     def _init_hf_model(self):
         """Load the HuggingFace model and set up outlines generators."""
+        device = (
+            'cuda' if torch.cuda.is_available()
+            else 'mps' if torch.backends.mps.is_available()
+            else 'cpu'
+        )
+        print(f"Using device: {device}")
         try:
             self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
             self.model = AutoModelForCausalLM.from_pretrained(self.model_name, low_cpu_mem_usage=False)
-            self.model.to('cuda')
+            self.model.to(device)
         except Exception as primary_error:
             print(f"\nCould not load HF model with basic settings: {primary_error}")
             try:
@@ -90,7 +96,6 @@ class LLMAgent:
                     device_map='auto',
                     offload_folder='./offload'
                 )
-                self.model.to('cuda')
             except Exception as fallback_error:
                 combined = f"{primary_error}\nFallback error: {fallback_error}"
                 print(f"\nFailed to load HF model: {combined}")

@@ -4,6 +4,7 @@ env/
 __pycache__/
 *.pyc
 graph_data/
+cache/
 benchmark_logs/
 benchmark_full_execution_*.txt
 benchmark_summary_report.txt

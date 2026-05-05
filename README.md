@@ -35,8 +35,8 @@ Os selos considerados para avaliação são: **Artefatos Disponíveis (SeloD)**,
 O sistema foi concebido para execução local (borda/embarcado), visando minimizar a latência e a dependência de rede.
 - **Sistema Operacional:** Linux (Ubuntu 20.04/22.04 LTS) ou macOS.
 - **Hardware Mínimo:** Processador multi-core, 16 GB de RAM, 10 GB de armazenamento.
-- **Hardware Recomendado:** Placa gráfica (GPU) com arquitetura NVIDIA (suporte a CUDA) e um mínimo de 8 GB de VRAM para a execução eficiente do modelo SLM (`Qwen3-4B`) sem offload para disco.
-- **Ambiente de Execução:** Python 3.10.
+- **Hardware Recomendado:** Placa gráfica (GPU) com arquitetura NVIDIA (suporte a CUDA) e um mínimo de 8 GB de VRAM para a execução eficiente do modelo SLM (`Qwen3-4B`) sem offload para disco. Em macOS, o sistema utiliza automaticamente a GPU via MPS (Metal Performance Shaders).
+- **Ambiente de Execução:** Python 3.10 ou superior (testado com 3.10 e 3.12). Python 3.13+ não é suportado pois alguns pacotes de dependência ainda não possuem wheels pré-compiladas para essas versões.
 
 # Dependências
 
@@ -71,7 +71,7 @@ pip install -r requirements.txt
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
 ollama serve &
-ollama pull qwen:4b
+ollama pull qwen3:4b
 ```
 
 > O método padrão é `--method hf` (HuggingFace), que não requer o Ollama. O passo 3 é necessário somente se você quiser usar `--method ollama`.
@@ -99,11 +99,13 @@ No terminal, com o ambiente ativado, execute (método padrão: HuggingFace, sem 
 1. Utilizando coordenadas:
 ```bash
 python3 src/app.py \
-  --origin '-23.526038,-46.696681' \
-  --destination '-23.520683,-46.679893' \
+  --origin='-23.526038,-46.696681' \
+  --destination='-23.520683,-46.679893' \
   --method hf \
   --tasks 'I need to go to a fuel'
 ```
+
+> **Atenção:** Para coordenadas com valores negativos, use a sintaxe `--origin='-lat,-lon'` (com `=`). Caso contrário, o argparse pode interpretar o sinal negativo como início de uma nova flag.
 
 2. Utilizando endereços textuais:
 ```bash
