@@ -1,40 +1,51 @@
+"""Benchmark runner for VAMOS reproducibility evaluation.
+
+Executes each scenario from the SCENARIOS list multiple times, captures the LLM
+decision JSON from the subprocess output, and produces a summary report.
+
+Usage:
+    python utils/bench.py [--method hf|ollama|openai] [--runs N] [--timeout T]
+
+All configuration defaults come from config.json at the project root.
+"""
+
+import argparse
 import subprocess
-import re
 import json
 from datetime import datetime
 import sys
 import os
 import time
-import pandas as pd # Necessário para a análise por categoria
-os.environ['CUDA_VISIBLE_DEVICES'] = '7'
+import pandas as pd
 
-# --- CONFIGURAÇÕES ---
-CONTEXT_ENGINE_PATH = "src/context_engine.py" 
-LOG_DIRECTORY = "benchmark_logs" 
-RUNS_PER_SCENARIO = 3
+# Resolve paths relative to the project root regardless of where the script is called from.
+_UTILS_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.dirname(_UTILS_DIR)
+_CONFIG_PATH = os.path.join(_PROJECT_ROOT, 'config.json')
+_CONTEXT_ENGINE_PATH = os.path.join(_PROJECT_ROOT, 'src', 'context_engine.py')
+_APP_PATH = os.path.join(_PROJECT_ROOT, 'src', 'app.py')
 
-# Método padrão para o benchmark. Importante:
-DEFAULT_LLM_METHOD = "hf"
 
-# Arquivo para salvar todo o output do terminal
-FULL_LOG_FILE = f"benchmark_full_execution_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+def _load_config() -> dict:
+    if os.path.exists(_CONFIG_PATH):
+        with open(_CONFIG_PATH, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {}
 
-class DualLogger:
-    """Duplica o output: imprime na tela e salva no arquivo ao mesmo tempo."""
-    def __init__(self, filepath):
-        self.terminal = sys.stdout
-        self.log = open(filepath, "w", encoding='utf-8')
 
-    def write(self, message):
-        self.terminal.write(message)
-        self.log.write(message)
-        self.log.flush() # Garante que grave em tempo real
+_CONFIG = _load_config()
+_BENCH_CFG = _CONFIG.get("benchmark", {})
 
-    def flush(self):
-        self.terminal.flush()
-        self.log.flush()
+DEFAULT_LLM_METHOD = _BENCH_CFG.get("llm_method", "hf")
+DEFAULT_RUNS = _BENCH_CFG.get("runs_per_scenario", 3)
+DEFAULT_TIMEOUT = _BENCH_CFG.get("timeout_seconds", 900)
+DEFAULT_LOG_DIR = os.path.join(_PROJECT_ROOT, _BENCH_CFG.get("log_directory", "benchmark_logs"))
 
-# --- LISTA DE CENÁRIOS ---
+
+# ---------------------------------------------------------------------------
+# Scenario definitions
+# ---------------------------------------------------------------------------
+
 SCENARIOS = [
     {
         'scenario_name': "Urgência - Combustível - Exemplo 1",
@@ -134,7 +145,7 @@ SCENARIOS = [
         'expected_choice': 2,
         'recalculation_expected': True,
         'expected_action_type': 'ADD_WAYPOINT',
-        'note': "POI Alvo detectado na mineração: Hospital Municipal Vila Santa Catarina Dr. Gilson de C. Marques de Carvalho"
+        'note': "POI Alvo detectado na mineração: Hospital Municipal Vila Santa Catarina"
     },
     {
         'scenario_name': "Urgência - Hospital - Exemplo 5",
@@ -144,7 +155,7 @@ SCENARIOS = [
         'expected_choice': 2,
         'recalculation_expected': True,
         'expected_action_type': 'ADD_WAYPOINT',
-        'note': "POI Alvo detectado na mineração: Pronto Socorro Municipal Dona Maria Antonieta Ferreira de Barros"
+        'note': "POI Alvo detectado na mineração: Pronto Socorro Municipal"
     },
     {
         'scenario_name': "Urgência - Hospital - Exemplo 6",
@@ -278,19 +289,22 @@ SCENARIOS = [
     },
 ]
 
-CONTEXT_TEMPLATE_STR = """from datetime import datetime
+# ---------------------------------------------------------------------------
+# Context engine mock template (written to disk before each subprocess call)
+# ---------------------------------------------------------------------------
+
+_CONTEXT_TEMPLATE = """from datetime import datetime
 
 class ContextEngine:
-    \"\"\"
-    MOCK AUTOMATIZADO PARA BENCHMARK (DADOS REAIS DE SP)
-    \"\"\"
+    \"\"\"Automated benchmark mock using static São Paulo context data.\"\"\"
+
     def get_user_context(self) -> dict:
         return {{
             "preferences": ["avoid downtown during rush hour", "prefers safer routes at night"],
-            "avoidance_rules": {rules_json} 
+            "avoidance_rules": {rules_json}
         }}
 
-    def get_scenario_context(self, origin=None, dest=None) -> dict:
+    def get_scenario_context(self, origin=None, destination=None) -> dict:
         return {{
             "current_time": datetime.now().strftime("%H:%M"),
             "day_of_week": "Tuesday",
@@ -299,243 +313,346 @@ class ContextEngine:
         }}
 """
 
-def update_context_file(rule: dict = None):
-    """Atualiza context_engine.py com regras de 'avoidance'."""
-    rules_list = [rule] if rule else []
-    content = CONTEXT_TEMPLATE_STR.format(rules_json=json.dumps(rules_list))
-    with open(CONTEXT_ENGINE_PATH, 'w', encoding='utf-8') as f:
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+class DualLogger:
+    """Write every output line to both the terminal and a log file simultaneously."""
+
+    def __init__(self, filepath: str):
+        self.terminal = sys.stdout
+        self.log_file = open(filepath, "w", encoding='utf-8')
+
+    def write(self, message: str):
+        self.terminal.write(message)
+        self.log_file.write(message)
+        self.log_file.flush()
+
+    def flush(self):
+        self.terminal.flush()
+        self.log_file.flush()
+
+
+def _update_context_file(avoidance_rule: dict = None):
+    """Overwrite context_engine.py with a benchmark mock containing the given rule."""
+    rules = [avoidance_rule] if avoidance_rule else []
+    content = _CONTEXT_TEMPLATE.format(rules_json=json.dumps(rules))
+    with open(_CONTEXT_ENGINE_PATH, 'w', encoding='utf-8') as f:
         f.write(content)
 
-def extract_llm_json(log_content: str) -> dict:
-    """Extrai o JSON de decisão da LLM de forma robusta."""
+
+def _extract_llm_json(log_content: str) -> dict:
+    """Extract the route-evaluation JSON block from subprocess output.
+
+    Looks for the marker line printed by LLMAgent.evaluate_routes(), then
+    parses the first complete JSON object that follows it.
+    """
     marker = "--- LLM Response (Route Evaluation JSON) ---"
-    start_index = log_content.find(marker)
-    if start_index == -1: return None
-    
-    json_start = log_content.find("{", start_index)
-    if json_start == -1: return None
-    
-    brace_count = 0
+    marker_pos = log_content.find(marker)
+    if marker_pos == -1:
+        return None
+
+    json_start = log_content.find("{", marker_pos)
+    if json_start == -1:
+        return None
+
+    brace_depth = 0
     json_end = -1
-    for i in range(json_start, len(log_content)):
-        char = log_content[i]
-        if char == '{': brace_count += 1
-        elif char == '}': brace_count -= 1
-        if brace_count == 0:
-            json_end = i + 1
+    for pos in range(json_start, len(log_content)):
+        char = log_content[pos]
+        if char == '{':
+            brace_depth += 1
+        elif char == '}':
+            brace_depth -= 1
+        if brace_depth == 0:
+            json_end = pos + 1
             break
-            
-    if json_end != -1:
-        json_str = log_content[json_start:json_end]
-        try:
-            return json.loads(json_str)
-        except json.JSONDecodeError:
-            return None
-    return None
 
-def generate_report(results_data):
-    """Gera um relatório final agregado e salva em arquivo."""
-    df = pd.DataFrame(results_data)
-    
-    if not df.empty:
-        df['Categoria'] = df['Scenario'].apply(lambda x: x.split(' - Exemplo')[0])
-    
-    valid_runs = df[~df['Result'].isin(['TIMEOUT', 'GEO_ERR', 'NO_LLM', 'ERROR'])]
-    
-    report_file = "benchmark_summary_report.txt"
-    with open(report_file, "w", encoding='utf-8') as f:
-        f.write("=== RELATÓRIO FINAL DETALHADO ===\n")
-        f.write(f"Data: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        f.write(f"Total Tentativas: {len(df)}\n")
-        f.write(f"Execuções Válidas (Sem Timeout/Erro): {len(valid_runs)}\n")
-        f.write("="*60 + "\n\n")
+    if json_end == -1:
+        return None
 
-        # 1. Performance Cognitiva
-        if not valid_runs.empty:
-            acc = valid_runs['Precision'].mean() * 100
-            comp = valid_runs['Completeness'].mean() * 100
-            f.write("--- 1. PERFORMANCE COGNITIVA (Acurácia Real) ---\n")
-            f.write(f"Precision (Escolha Rota):   {acc:.2f}%\n")
-            f.write(f"Completeness (Intenção):    {comp:.2f}%\n")
+    try:
+        return json.loads(log_content[json_start:json_end])
+    except json.JSONDecodeError as exc:
+        print(f"  [WARN] JSON parse error in LLM response: {exc}")
+        return None
+
+
+def _classify_result(output: str, scenario: dict, llm_data: dict, duration: float):
+    """Determine whether a scenario run passed and return a result record."""
+    precision_pass = False
+    completeness_pass = False
+    result_label = "ERROR"
+
+    if llm_data:
+        chosen_id = llm_data.get("chosen_route_id")
+        required_action = llm_data.get("required_action", {}) if isinstance(llm_data, dict) else {}
+        action_type = required_action.get("type", "NONE")
+
+        if chosen_id == scenario.get("expected_choice"):
+            precision_pass = True
+
+        expected_action = scenario.get(
+            "expected_action_type",
+            "ADD_WAYPOINT" if scenario.get("recalculation_expected", False) else "NONE",
+        )
+
+        if expected_action == "ADD_WAYPOINT":
+            completeness_pass = (chosen_id == scenario.get("expected_choice")) or (action_type == "ADD_WAYPOINT")
         else:
-            f.write("--- 1. PERFORMANCE COGNITIVA ---\n")
-            f.write("Nenhum dado válido para cálculo.\n")
+            completeness_pass = (chosen_id == scenario.get("expected_choice")) or (action_type == "NONE")
 
-        # 2. Estabilidade do Sistema
-        f.write("\n--- 2. ESTABILIDADE ---\n")
-        timeouts = len(df[df['Result'] == 'TIMEOUT'])
-        errors = len(df[df['Result'].isin(['GEO_ERR', 'NO_LLM', 'ERROR'])])
-        f.write(f"Timeouts: {timeouts} ({timeouts/len(df)*100:.1f}%)\n")
-        f.write(f"Outros Erros: {errors}\n\n")
+        result_label = "PASS" if (precision_pass and completeness_pass) else "FAIL"
+    else:
+        if "TIMEOUT" in output:
+            result_label = "TIMEOUT"
+        elif "Geocoding error" in output or "Geocoding Error" in output:
+            result_label = "GEO_ERR"
+        else:
+            result_label = "NO_LLM"
 
-        # 3. Análise por Categoria
-        f.write("--- 3. DETALHE POR CATEGORIA ---\n")
-        
+    return result_label, precision_pass, completeness_pass
+
+
+def _generate_report(results: list, output_dir: str):
+    """Write a detailed text report and a raw CSV file from the collected results."""
+    data_frame = pd.DataFrame(results)
+
+    if not data_frame.empty:
+        data_frame['Category'] = data_frame['Scenario'].apply(lambda x: x.split(' - Exemplo')[0])
+
+    valid_runs = data_frame[~data_frame['Result'].isin(['TIMEOUT', 'GEO_ERR', 'NO_LLM', 'ERROR'])]
+
+    report_path = os.path.join(output_dir, "benchmark_summary_report.txt")
+    csv_path = os.path.join(output_dir, "benchmark_raw_data.csv")
+
+    with open(report_path, "w", encoding='utf-8') as report_file:
+        report_file.write("=== DETAILED BENCHMARK REPORT ===\n")
+        report_file.write(f"Date       : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        report_file.write(f"Total runs : {len(data_frame)}\n")
+        report_file.write(f"Valid runs  : {len(valid_runs)} (excludes TIMEOUT/errors)\n")
+        report_file.write("=" * 60 + "\n\n")
+
+        # 1. Cognitive performance
+        report_file.write("--- 1. COGNITIVE PERFORMANCE ---\n")
         if not valid_runs.empty:
-            # Agrupa apenas os válidos para ter a porcentagem de acerto real
-            valid_grouped = valid_runs.groupby('Categoria').agg(
+            precision = valid_runs['Precision'].mean() * 100
+            completeness = valid_runs['Completeness'].mean() * 100
+            report_file.write(f"Precision   (route choice) : {precision:.2f}%\n")
+            report_file.write(f"Completeness (intent match): {completeness:.2f}%\n")
+        else:
+            report_file.write("No valid data available for calculation.\n")
+
+        # 2. Stability
+        report_file.write("\n--- 2. STABILITY ---\n")
+        timeout_count = len(data_frame[data_frame['Result'] == 'TIMEOUT'])
+        error_count = len(data_frame[data_frame['Result'].isin(['GEO_ERR', 'NO_LLM', 'ERROR'])])
+        report_file.write(f"Timeouts    : {timeout_count} ({timeout_count / len(data_frame) * 100:.1f}%)\n")
+        report_file.write(f"Other errors: {error_count}\n\n")
+
+        # 3. Per-category breakdown
+        report_file.write("--- 3. DETAIL BY CATEGORY ---\n")
+        if not valid_runs.empty:
+            grouped = valid_runs.groupby('Category').agg(
                 Precision=('Precision', 'mean'),
                 Completeness=('Completeness', 'mean'),
                 Avg_Time=('Duration', 'mean'),
                 Count=('Run', 'count')
             )
-            
-            # Formatação
-            valid_grouped['Precision'] = (valid_grouped['Precision'] * 100).map("{:.1f}%".format)
-            valid_grouped['Completeness'] = (valid_grouped['Completeness'] * 100).map("{:.1f}%".format)
-            valid_grouped['Avg_Time'] = valid_grouped['Avg_Time'].map("{:.2f}s".format)
-            
-            f.write(valid_grouped.to_string())
+            grouped['Precision'] = (grouped['Precision'] * 100).map("{:.1f}%".format)
+            grouped['Completeness'] = (grouped['Completeness'] * 100).map("{:.1f}%".format)
+            grouped['Avg_Time'] = grouped['Avg_Time'].map("{:.2f}s".format)
+            report_file.write(grouped.to_string())
         else:
-            f.write("Não há dados válidos suficientes para agrupar por categoria.")
-            
-        f.write("\n\n")
+            report_file.write("Insufficient valid data to group by category.\n")
 
-        # 4. Dados Brutos de Erros
-        f.write("--- 4. EXECUÇÕES COM PROBLEMAS TÉCNICOS ---\n")
-        errors_df = df[df['Result'] != 'PASS']
-        if not errors_df.empty:
-            # Seleciona colunas relevantes para o log de erro
-            cols = ['Scenario', 'Run', 'Result', 'Duration']
-            f.write(errors_df[cols].to_string(index=False))
+        report_file.write("\n\n")
+
+        # 4. Failed runs
+        report_file.write("--- 4. FAILED RUNS ---\n")
+        failed_runs = data_frame[data_frame['Result'] != 'PASS']
+        if not failed_runs.empty:
+            cols = ['Scenario', 'Run', 'Result', 'Duration', 'Error_Hint']
+            available = [c for c in cols if c in failed_runs.columns]
+            report_file.write(failed_runs[available].to_string(index=False))
         else:
-            f.write("Nenhuma falha registrada.")
-            
-    print(f"\nRelatório de análise salvo em: {report_file}")
-    df.to_csv("benchmark_raw_data.csv", index=False)
-    print("Dados brutos (CSV) salvos em: benchmark_raw_data.csv")
+            report_file.write("No failures recorded.\n")
 
-def run_benchmark():
-    # ATIVA O LOGGER DUPLO
-    sys.stdout = DualLogger(FULL_LOG_FILE)
+    print(f"\nSummary report saved to: {report_path}")
+    data_frame.to_csv(csv_path, index=False)
+    print(f"Raw CSV data saved to  : {csv_path}")
 
-    print(f"--- INICIANDO BENCHMARK ---")
-    print(f"Log Completo: {FULL_LOG_FILE}")
-    print(f"Método LLM: {DEFAULT_LLM_METHOD}")
-    if DEFAULT_LLM_METHOD == 'openai':
+
+# ---------------------------------------------------------------------------
+# Main benchmark runner
+# ---------------------------------------------------------------------------
+
+def run_benchmark(llm_method: str, runs_per_scenario: int, timeout_seconds: int, log_directory: str):
+    full_log_path = os.path.join(
+        _PROJECT_ROOT,
+        f"benchmark_full_execution_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    )
+    sys.stdout = DualLogger(full_log_path)
+
+    print("--- STARTING VAMOS BENCHMARK ---")
+    print(f"Full log  : {full_log_path}")
+    print(f"Method    : {llm_method}")
+    print(f"Runs/scenario: {runs_per_scenario}")
+    print(f"Timeout   : {timeout_seconds}s per run")
+    print(f"Scenarios : {len(SCENARIOS)}")
+    print(f"Total runs: {len(SCENARIOS) * runs_per_scenario}")
+
+    if llm_method == 'openai':
         api_key = os.getenv('OPENAI_API_KEY')
         if api_key:
-            print(f"✓ OPENAI_API_KEY configurada (***{api_key[-4:]})")
+            print(f"OPENAI_API_KEY found (***{api_key[-4:]})")
         else:
-            print("⚠ AVISO: OPENAI_API_KEY não encontrada no ambiente!")
+            print("WARNING: OPENAI_API_KEY not set in environment!")
     print("-" * 60)
 
-    os.makedirs(LOG_DIRECTORY, exist_ok=True)
-    python_exec = sys.executable
-    
-    # 1. Backup do Contexto Original
+    os.makedirs(log_directory, exist_ok=True)
+    python_executable = sys.executable
+
+    # Back up the original context_engine.py to restore it after the run.
     original_context = ""
-    if os.path.exists(CONTEXT_ENGINE_PATH):
-        with open(CONTEXT_ENGINE_PATH, 'r', encoding='utf-8') as f:
+    if os.path.exists(_CONTEXT_ENGINE_PATH):
+        with open(_CONTEXT_ENGINE_PATH, 'r', encoding='utf-8') as f:
             original_context = f.read()
 
-    # LISTA PARA ARMAZENAR DADOS DETALHADOS
-    results_data = []
+    results = []
 
     try:
-        for run_idx in range(1, RUNS_PER_SCENARIO + 1):
-            print(f"\n>>> RODADA DE EXECUÇÃO {run_idx}/{RUNS_PER_SCENARIO}")
-            
-            for i, scen in enumerate(SCENARIOS):
-                scen_name = scen['scenario_name']
-                print(f"   ({i+1}/{len(SCENARIOS)}) {scen_name}...", end=" ", flush=True)
-                
-                update_context_file(scen.get("avoid_rule"))
-                
-                method = scen.get("method", DEFAULT_LLM_METHOD)
-                # Monta comando - origem/destino sem espaços após vírgula
-                # Usa formato --origem=valor para evitar que números negativos sejam interpretados como flags
-                origin = scen["origin"].replace(", ", ",")
-                destination = scen["destination"].replace(", ", ",")
-                cmd = [python_exec, "src/app.py",
-                       f"--origem={origin}",
-                       f"--destino={destination}",
-                       f"--method={method}"]
-                if scen.get("tasks"):
-                    cmd.append("--tarefas")
-                    cmd.extend(scen["tasks"])
+        for run_index in range(1, runs_per_scenario + 1):
+            print(f"\n>>> RUN {run_index}/{runs_per_scenario}")
+
+            for scenario_index, scenario in enumerate(SCENARIOS):
+                scenario_name = scenario['scenario_name']
+                print(
+                    f"  ({scenario_index + 1}/{len(SCENARIOS)}) {scenario_name}...",
+                    end=" ", flush=True
+                )
+
+                _update_context_file(scenario.get("avoid_rule"))
+
+                effective_method = scenario.get("method", llm_method)
+                origin = scenario["origin"].replace(", ", ",")
+                destination = scenario["destination"].replace(", ", ",")
+
+                command = [
+                    python_executable, _APP_PATH,
+                    f"--origin={origin}",
+                    f"--destination={destination}",
+                    f"--method={effective_method}",
+                ]
+                if scenario.get("tasks"):
+                    command.append("--tasks")
+                    command.extend(scenario["tasks"])
 
                 start_time = time.time()
+                error_hint = ""
                 try:
-                    process = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', timeout=500)
+                    process = subprocess.run(
+                        command,
+                        capture_output=True,
+                        text=True,
+                        encoding='utf-8',
+                        timeout=timeout_seconds,
+                        cwd=_PROJECT_ROOT,
+                    )
                     output = process.stdout + "\n" + process.stderr
+                    if process.returncode != 0:
+                        error_hint = f"exit_code={process.returncode}"
                 except subprocess.TimeoutExpired:
-                    print("[TIMEOUT]")
+                    print(f"[TIMEOUT after {timeout_seconds}s]")
                     output = "TIMEOUT"
-                except Exception as e:
-                    print(f"[ERRO: {e}]")
-                    output = str(e)
-                
+                    error_hint = f"exceeded {timeout_seconds}s"
+                except Exception as exc:
+                    print(f"[ERROR: {exc}]")
+                    output = str(exc)
+                    error_hint = str(exc)
+
                 duration = time.time() - start_time
 
-                # Log Individual
-                safe_name = scen_name.replace(" ", "_").replace("/", "-")
-                log_file = os.path.join(LOG_DIRECTORY, f"run{run_idx}_{safe_name}.log")
-                with open(log_file, "w", encoding='utf-8') as f:
-                    f.write(f"CMD: {' '.join(cmd)}\n\n{output}")
+                # Save per-scenario log.
+                safe_name = scenario_name.replace(" ", "_").replace("/", "-")
+                log_path = os.path.join(log_directory, f"run{run_index}_{safe_name}.log")
+                with open(log_path, "w", encoding='utf-8') as log_file:
+                    log_file.write(f"CMD: {' '.join(command)}\n\n{output}")
 
-                # Análise
-                llm_data = extract_llm_json(output)
-                
-                precision_pass = False
-                completeness_pass = False
-                result_str = "ERROR"
+                llm_data = _extract_llm_json(output)
+                result_label, precision_pass, completeness_pass = _classify_result(
+                    output, scenario, llm_data, duration
+                )
 
-                if llm_data:
-                    chosen_id = llm_data.get("chosen_route_id")
-                    req_action = llm_data.get("required_action", {}) if isinstance(llm_data, dict) else {}
-                    action_type = req_action.get("type", "NONE")
+                print(f"[{result_label}] ({duration:.1f}s)")
 
-                    # Precision: escolha de rota (1/2) como planejado
-                    if chosen_id == scen.get("expected_choice"):
-                        precision_pass = True
-
-                    # Completeness: para o PAVe atual, a intenção é atendida quando o LLM escolhe
-                    # a rota esperada (ex.: rota com paradas quando há tarefa).
-                    # Se no futuro o LLM preencher required_action.type, também aceitamos isso.
-                    expected_action = scen.get(
-                        "expected_action_type",
-                        "ADD_WAYPOINT" if scen.get("recalculation_expected", False) else "NONE",
-                    )
-
-                    if expected_action == "ADD_WAYPOINT":
-                        completeness_pass = (chosen_id == scen.get("expected_choice")) or (action_type == "ADD_WAYPOINT")
-                    else:
-                        completeness_pass = (chosen_id == scen.get("expected_choice")) or (action_type == "NONE")
-
-                    result_str = "PASS" if (precision_pass and completeness_pass) else "FAIL"
-                    print(f"[{result_str}] ({duration:.1f}s)")
-                else:
-                    if "TIMEOUT" in output: result_str = "TIMEOUT"
-                    elif "Geocoding Error" in output: result_str = "GEO_ERR"
-                    else: result_str = "NO_LLM"
-                    print(f"[{result_str}] ({duration:.1f}s)")
-
-                # REGISTRA OS DADOS NA LISTA
-                results_data.append({
-                    "Scenario": scen_name,
-                    "Run": run_idx,
+                results.append({
+                    "Scenario": scenario_name,
+                    "Run": run_index,
                     "Duration": duration,
                     "Precision": 1 if precision_pass else 0,
                     "Completeness": 1 if completeness_pass else 0,
-                    "Result": result_str,
+                    "Result": result_label,
                     "Chosen_ID": llm_data.get("chosen_route_id") if llm_data else None,
-                    "Action": llm_data.get("required_action", {}).get("type") if llm_data else None,
-                    "Expected_Action": scen.get(
-                        "expected_action_type",
-                        "ADD_WAYPOINT" if scen.get("recalculation_expected", False) else "NONE",
+                    "Action": (
+                        llm_data.get("required_action", {}).get("type")
+                        if llm_data else None
                     ),
-                    "Method": scen.get("method", DEFAULT_LLM_METHOD),
+                    "Expected_Action": scenario.get(
+                        "expected_action_type",
+                        "ADD_WAYPOINT" if scenario.get("recalculation_expected", False) else "NONE",
+                    ),
+                    "Method": effective_method,
+                    "Error_Hint": error_hint,
                 })
 
     finally:
         if original_context:
-            with open(CONTEXT_ENGINE_PATH, 'w', encoding='utf-8') as f:
+            with open(_CONTEXT_ENGINE_PATH, 'w', encoding='utf-8') as f:
                 f.write(original_context)
-            print("\nContexto restaurado.")
-            
-        # Gera relatório final mesmo se cancelar no meio
-        generate_report(results_data)
+            print("\nContext engine restored to original.")
+
+        _generate_report(results, _PROJECT_ROOT)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="VAMOS benchmark — reproduces the experimental results from the paper."
+    )
+    parser.add_argument(
+        "--method",
+        default=DEFAULT_LLM_METHOD,
+        choices=['hf', 'ollama', 'openai'],
+        help=f"LLM backend to use (default: '{DEFAULT_LLM_METHOD}' from config.json)."
+    )
+    parser.add_argument(
+        "--runs",
+        type=int,
+        default=DEFAULT_RUNS,
+        help=f"Number of runs per scenario (default: {DEFAULT_RUNS} from config.json)."
+    )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=DEFAULT_TIMEOUT,
+        help=f"Timeout in seconds per scenario run (default: {DEFAULT_TIMEOUT}s from config.json)."
+    )
+    parser.add_argument(
+        "--log-dir",
+        default=DEFAULT_LOG_DIR,
+        help="Directory for per-scenario log files."
+    )
+    args = parser.parse_args()
+
+    run_benchmark(
+        llm_method=args.method,
+        runs_per_scenario=args.runs,
+        timeout_seconds=args.timeout,
+        log_directory=args.log_dir,
+    )
+
 
 if __name__ == "__main__":
-    run_benchmark()
+    main()

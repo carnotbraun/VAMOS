@@ -1,9 +1,9 @@
 import argparse
+import json
 import os
 import geopandas as gpd
 import matplotlib.pyplot as plt
 import osmnx as ox
-import json
 
 import graph_utils
 from routing_engine import RoutingEngine
@@ -11,43 +11,43 @@ from llm_agent import LLMAgent
 from context_engine import ContextEngine
 from shapely.geometry import LineString
 
-# --- CONFIGURAÇÕES ---
-# Modelos por método
-#HF_MODEL_NAME = "solidrust/Meta-Llama-3-8B-Instruct-hf-AWQ"  # Modelo HuggingFace teste
-#HF_MODEL_NAME = "meta-llama/Llama-3.1-8B-Instruct"  # Modelo HuggingFace maior
-#HF_MODEL_NAME = "LiquidAI/LFM2.5-1.2B-Instruct" # Menor modelo 
-#HF_MODEL_NAME = "mistralai/Mistral-7B-Instruct-v0.3"  # Modelo medio
-#HF_MODEL_NAME = "microsoft/Phi-3.5-mini-instruct" #modelo semelhante de tamanho
-
-HF_MODEL_NAME = "Qwen/Qwen3-4B" # Modelo baseline
-#HF_MODEL_NAME = "Qwen/Qwen3-0.6B"
-#HF_MODEL_NAME = "Qwen/Qwen3-1.7"  
-#HF_MODEL_NAME = "Qwen/Qwen3-8B"  # Modelo maior Qwen-3
+# Resolve project root from this file's location.
+_SRC_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.dirname(_SRC_DIR)
 
 
-OLLAMA_MODEL_NAME = "llama3"  # Modelo Ollama local
-OPENAI_MODEL_NAME = "gpt-3.5-turbo"  # Modelo OpenAI API
-#OPENAI_MODEL_NAME = "gpt-4-turbo-preview"  # GPT-4 (mais caro)
-#OPENAI_MODEL_NAME = "gpt-4o"  # GPT-4 Optimized
+def _load_config() -> dict:
+    config_path = os.path.join(_PROJECT_ROOT, 'config.json')
+    if os.path.exists(config_path):
+        with open(config_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {}
 
-def plot_final_route(router: RoutingEngine, path: list, pois_info: list, output_filename="rota_final.png"):
-    """
-    Plota a rota final usando as funcionalidades nativas e mais robustas do OSMnx.
-    """
-    print(f"\nGerando mapa da rota em '{output_filename}'...")
+
+def _get_model_name(method: str, config: dict) -> str:
+    llm_cfg = config.get("llm", {})
+    if method == 'hf':
+        return llm_cfg.get("hf_model", "Qwen/Qwen3-4B")
+    if method == 'ollama':
+        return llm_cfg.get("ollama_model", "qwen:4b")
+    if method == 'openai':
+        return llm_cfg.get("openai_model", "gpt-3.5-turbo")
+    return llm_cfg.get("hf_model", "Qwen/Qwen3-4B")
+
+
+def plot_final_route(router: RoutingEngine, path: list, pois_info: list, output_path: str = "rota_final.png"):
+    """Plot the optimised route on an OSMnx map and save it to disk."""
+    print(f"\nGenerating route map at '{output_path}'...")
     if not path:
-        print("Caminho vazio, não é possível gerar o mapa.")
+        print("Empty path — cannot generate map.")
         return
 
-    # Extrai as coordenadas dos POIs para plotagem
     poi_lons = [poi['lon'] for poi in pois_info]
     poi_lats = [poi['lat'] for poi in pois_info]
 
-    # Calcula o bounding box do caminho para zoom
     path_lons = [router.graph.nodes[n]['x'] for n in path]
     path_lats = [router.graph.nodes[n]['y'] for n in path]
-    
-    # Adiciona margem de 10% ao redor do caminho
+
     margin = 0.5
     lon_range = max(path_lons) - min(path_lons)
     lat_range = max(path_lats) - min(path_lats)
@@ -58,137 +58,183 @@ def plot_final_route(router: RoutingEngine, path: list, pois_info: list, output_
         max(path_lons) + lon_range * margin
     )
 
-    # Plota o grafo e a rota com cores visíveis
     _, ax = ox.plot_graph_route(
-        router.graph, path, 
-        route_color='red', 
+        router.graph, path,
+        route_color='red',
         route_linewidth=6,
-        node_size=0, 
+        node_size=0,
         bgcolor='white',
         edge_color='#333333',
         edge_linewidth=0.5,
-        show=False, 
+        show=False,
         close=False,
         figsize=(12, 12)
     )
-    
-    # Adiciona os POIs visitados ao mapa como pontos azuis
+
     if poi_lons and poi_lats:
-        ax.scatter(poi_lons, poi_lats, c='blue', s=150, zorder=5, label='Paradas (POIs)', edgecolors='black', linewidths=1.5)
-    
-    ax.set_title("Rota Final Otimizada com Paradas", fontsize=14, pad=20)
+        ax.scatter(
+            poi_lons, poi_lats,
+            c='blue', s=150, zorder=5,
+            label='Stops (POIs)', edgecolors='black', linewidths=1.5
+        )
+
+    ax.set_title("Optimised Route with Stops", fontsize=14, pad=20)
     ax.legend(loc='upper right', fontsize=10)
     plt.tight_layout()
-    plt.savefig(output_filename, dpi=300, bbox_inches='tight', facecolor='white')
-    print("Mapa salvo com sucesso.")
-    
+    plt.savefig(output_path, dpi=300, bbox_inches='tight', facecolor='white')
+    print("Map saved successfully.")
+
+
 def geometry_to_latlon(geom):
-    """Retorna (lat, lon) para qualquer geometria shapely."""
+    """Return (lat, lon) for any shapely geometry."""
     if geom is None:
         return None, None
-    if geom.geom_type == "Point":
-        p = geom
-    else:
-        p = geom.representative_point()
-    return p.y, p.x
+    point = geom if geom.geom_type == "Point" else geom.representative_point()
+    return point.y, point.x
+
 
 def main():
+    config = _load_config()
+    llm_cfg = config.get("llm", {})
+    out_cfg = config.get("output", {})
+
+    default_method = llm_cfg.get("default_method", "hf")
+    default_output = out_cfg.get("route_image", "rota_final.png")
+
     parser = argparse.ArgumentParser(
-        description="Agente VAMOS SBRC 2026",
-        allow_abbrev=False  # Evita ambiguidade com números negativos
+        description="VAMOS — Vehicular Agent for Multi-objective Optimization and Semantics",
+        allow_abbrev=False
     )
-    parser.add_argument("--method", default="ollama", choices=['ollama', 'hf', 'openai'], help="Método do LLM a ser utilizado.")
-    parser.add_argument("--origem", required=True, type=str, help="Endereço de partida (ex: 'Rua Reitor Lafayete, Campinas' ou '-1.370769,-48.442457').")
-    parser.add_argument("--destino", required=True, type=str, help="Endereço de destino (ex: 'Shopping Iguatemi, Campinas' ou '-1.360059,-48.432432').")
-    parser.add_argument("--tarefas", nargs='+', default=[], help="Lista de tarefas (ex: 'passar na farmácia' 'comprar pão').")
-    parser.add_argument("--force_download", action="store_true", help="Força o download do grafo e POIs, ignorando o cache.")
+    parser.add_argument(
+        "--origin", "--origem",
+        dest="origin", required=True, type=str,
+        help="Departure address or coordinates (e.g. 'Av. Paulista, São Paulo' or '-23.56,-46.65')."
+    )
+    parser.add_argument(
+        "--destination", "--destino",
+        dest="destination", required=True, type=str,
+        help="Destination address or coordinates."
+    )
+    parser.add_argument(
+        "--tasks", "--tarefas",
+        dest="tasks", nargs='+', default=[],
+        help="List of tasks (e.g. 'stop at a pharmacy' 'buy bread')."
+    )
+    parser.add_argument(
+        "--method",
+        default=default_method,
+        choices=['ollama', 'hf', 'openai'],
+        help="LLM inference backend to use (default from config.json)."
+    )
+    parser.add_argument(
+        "--output",
+        default=default_output,
+        help="Output file path for the route map image (default from config.json)."
+    )
+    parser.add_argument(
+        "--force-download", "--force_download",
+        dest="force_download", action="store_true",
+        help="Force re-download of the street graph and POIs, ignoring cache."
+    )
     args = parser.parse_args()
 
-    print("--- Iniciando Sistema de Roteamento... ---")
+    model_name = _get_model_name(args.method, config)
+
+    print("--- Starting VAMOS Routing System ---")
 
     graph = graph_utils.get_graph(args.force_download)
     pois_gdf = graph_utils.get_pois(graph, args.force_download)
-    # --- PROJEÇÃO PARA CÁLCULO DE DISTÂNCIAS (em metros) ---
-    G_proj = ox.project_graph(graph)
-    pois_proj = pois_gdf.to_crs(G_proj.graph["crs"]) if not pois_gdf.empty else pois_gdf
+
+    projected_graph = ox.project_graph(graph)
+    projected_pois = (
+        pois_gdf.to_crs(projected_graph.graph["crs"]) if not pois_gdf.empty else pois_gdf
+    )
 
     router = RoutingEngine(graph)
-    
-    # Seleciona o modelo baseado no método
-    if args.method == 'hf':
-        model_name = HF_MODEL_NAME
-    elif args.method == 'ollama':
-        model_name = OLLAMA_MODEL_NAME
-    elif args.method == 'openai':
-        model_name = OPENAI_MODEL_NAME
-    else:
-        model_name = OLLAMA_MODEL_NAME  # fallback
-    
-    llm = LLMAgent(model_name=model_name, method=args.method) 
+    language_model = LLMAgent(model_name=model_name, method=args.method)
     context_provider = ContextEngine()
 
-    origem_node = router.address_to_node(args.origem)
-    destino_node = router.address_to_node(args.destino) 
-    if not all([origem_node, destino_node]):
-        print("Erro: Não foi possível encontrar os nós de origem/destino. Verifique os endereços.")
+    origin_node = router.address_to_node(args.origin)
+    destination_node = router.address_to_node(args.destination)
+    if not all([origin_node, destination_node]):
+        print("Error: could not resolve origin/destination addresses. Check the input values.")
         return
 
-    task_analysis = llm.classify_tasks(args.tarefas)
-    tasks = sorted(task_analysis.get("tasks", []), key=lambda x: x.get('importance', 0), reverse=True)
-    
+    task_analysis = language_model.classify_tasks(args.tasks)
+    tasks = sorted(task_analysis.get("tasks", []), key=lambda t: t.get('importance', 0), reverse=True)
+
     candidate_routes = []
-    
-    direct_path, direct_cost = router.find_shortest_path(origem_node, destino_node)
-    route_direct_nodes = direct_path  # alias para o snippet de POI (rota direta)
+
+    direct_path, direct_cost = router.find_shortest_path(origin_node, destination_node)
 
     if direct_path:
         candidate_routes.append({
-            "description": "Rota Direta", "path": direct_path, "cost_seconds": direct_cost,
-            "tasks_completed": [], "pois_info": []
+            "description": "Direct Route",
+            "path": direct_path,
+            "cost_seconds": direct_cost,
+            "tasks_completed": [],
+            "pois_info": []
         })
 
-    if tasks:
-        print("\nTarefas classificadas por importância:")
-        for t in tasks: print(f"- {t['task']} (Importance: {t.get('importance', 'N/A')}) -> POI: {t['poi_tags']}")
-        
-        poi_nodes_to_visit, task_poi_map = [], {}
+    if tasks and direct_path:
+        print("\nTasks ranked by importance:")
+        for task in tasks:
+            print(f"  - {task['task']} (importance: {task.get('importance', 'N/A')}) -> POI: {task['poi_tags']}")
+
+        waypoint_nodes = []
+        waypoint_task_map = {}
+
         for task in tasks:
             tags = task.get("poi_tags", {})
-            if not tags: continue
-            key, value = list(tags.items())[0]
-            relevant_pois = pois_proj[pois_proj[key] == value]
+            if not tags:
+                continue
+            tag_key, tag_value = list(tags.items())[0]
+            if tag_key not in projected_pois.columns:
+                print(f"Warning: POI column '{tag_key}' not available for task '{task['task']}'. Skipping.")
+                continue
+            matching_pois = projected_pois[projected_pois[tag_key] == tag_value]
 
-            if not relevant_pois.empty:
-                # 1) Construir LineString da rota direta (em coordenadas projetadas)
+            if not matching_pois.empty:
                 route_coords = [
-                    (G_proj.nodes[n]["x"], G_proj.nodes[n]["y"])
-                    for n in route_direct_nodes
+                    (projected_graph.nodes[n]["x"], projected_graph.nodes[n]["y"])
+                    for n in direct_path
                 ]
                 route_line = LineString(route_coords)
 
-                # 2) Calcular distância de cada POI à rota
-                relevant_pois = relevant_pois.copy()
-                relevant_pois["dist_to_route"] = relevant_pois.geometry.apply(
+                matching_pois = matching_pois.copy()
+                matching_pois["dist_to_route"] = matching_pois.geometry.apply(
                     lambda geom: geom.distance(route_line)
                 )
 
-                # 3) Selecionar o POI mais próximo da rota
-                best_poi = relevant_pois.sort_values("dist_to_route").iloc[0]
+                best_poi = matching_pois.sort_values("dist_to_route").iloc[0]
                 poi_node = best_poi["nearest_node"]
-                if poi_node not in poi_nodes_to_visit:
-                    poi_nodes_to_visit.append(poi_node)
-                    task_poi_map[poi_node] = task # salvamos o dict inteiro da tarefa
-            else: print(f"Aviso: Nenhum POI encontrado para a tarefa '{task['task']}'")
-        
-        if poi_nodes_to_visit:
-            print(f"\nOtimizando a ordem de visita para {len(poi_nodes_to_visit)} POI(s)...")
-            multi_stop_path, multi_stop_cost, ordered_stops = router.find_optimal_route_for_pois(origem_node, destino_node, poi_nodes_to_visit)
-        
+                if poi_node not in waypoint_nodes:
+                    waypoint_nodes.append(poi_node)
+                    waypoint_task_map[poi_node] = task
+            else:
+                print(f"Warning: no POI found for task '{task['task']}'")
+
+        if waypoint_nodes:
+            print(f"\nOptimising visit order for {len(waypoint_nodes)} waypoint(s)...")
+            multi_stop_path, multi_stop_cost, ordered_stops = router.find_optimal_route_for_pois(
+                origin_node, destination_node, waypoint_nodes
+            )
+
             if multi_stop_path:
-                stops_info = [pois_gdf[pois_gdf['nearest_node'] == node].iloc[0] for node in ordered_stops if node not in [origem_node, destino_node]]
+                stops_info = [
+                    pois_gdf[pois_gdf['nearest_node'] == node].iloc[0]
+                    for node in ordered_stops
+                    if node not in [origin_node, destination_node]
+                ]
                 candidate_routes.append({
-                    "description": "Rota com Paradas (Multi-tarefa)", "path": multi_stop_path, "cost_seconds": multi_stop_cost,
-                    "tasks_completed": [task_poi_map[node] for node in ordered_stops if node in task_poi_map],
+                    "description": "Route with Stops (multi-task)",
+                    "path": multi_stop_path,
+                    "cost_seconds": multi_stop_cost,
+                    "tasks_completed": [
+                        waypoint_task_map[node]
+                        for node in ordered_stops
+                        if node in waypoint_task_map
+                    ],
                     "pois_info": [
                         {
                             "name": stop.get("name", "POI"),
@@ -199,41 +245,46 @@ def main():
                     ]
                 })
             else:
-                print("\nAVISO: Não foi possível calcular uma rota que conecte todos os pontos. Isso pode ser devido a endereços ambíguos ou POIs muito distantes. Apenas a rota direta será considerada.")
+                print(
+                    "\nWarning: could not compute a route connecting all waypoints. "
+                    "This may be due to ambiguous addresses or very distant POIs. "
+                    "Only the direct route will be considered."
+                )
 
     if len(candidate_routes) <= 1:
         final_route = candidate_routes[0] if candidate_routes else None
-        justification = "Rota direta selecionada pois não havia tarefas ou a rota com paradas não pôde ser calculada."
+        justification = "Direct route selected — no tasks or no viable multi-stop route."
     else:
-        print("\nRotas candidatas apresentadas ao LLM:")
-        for i, r in enumerate(candidate_routes): print(f"  Rota {i+1}: {r['description']}, Tempo: {r['cost_seconds']/60:.2f} min")
+        print("\nCandidate routes submitted to LLM:")
+        for index, route in enumerate(candidate_routes):
+            print(f"  Route {index + 1}: {route['description']} — {route['cost_seconds'] / 60:.2f} min")
+
         user_context = context_provider.get_user_context()
-        origem_coords = router.get_node_coords(origem_node)
-        destino_coords = router.get_node_coords(destino_node)
-        scenario_context = context_provider.get_scenario_context(origem_coords, destino_coords)
-        #print(f"\nContexto em tempo real: Clima: {scenario_context.get('weather')}, Tráfego: {scenario_context.get('traffic_conditions')}")
-        llm_evaluation = llm.evaluate_routes(user_context, scenario_context, candidate_routes)
+        origin_coords = router.get_node_coords(origin_node)
+        destination_coords = router.get_node_coords(destination_node)
+        scenario_context = context_provider.get_scenario_context(origin_coords, destination_coords)
+
+        llm_evaluation = language_model.evaluate_routes(user_context, scenario_context, candidate_routes)
 
         chosen_id = llm_evaluation.get("chosen_route_id", 1)
-        justification = llm_evaluation.get("justification", "Nenhuma justificativa fornecida.")
+        justification = llm_evaluation.get("justification", "No justification provided.")
         final_route = candidate_routes[chosen_id - 1]
 
     if final_route:
-        print("\n--- Decisão Final do Agente ---")
-        print(f"Justificativa: {justification}")
-        print("\nDetalhes da Rota Recomendada:")
-        print(f"  - Descrição: {final_route['description']}")
-        print(f"  - Tempo estimado de viagem: {final_route['cost_seconds'] / 60:.2f} minutos")
+        print("\n--- Agent Final Decision ---")
+        print(f"Justification: {justification}")
+        print("\nRecommended Route Details:")
+        print(f"  Description     : {final_route['description']}")
+        print(f"  Estimated time  : {final_route['cost_seconds'] / 60:.2f} minutes")
         if final_route['tasks_completed']:
-            task_texts = [task['task'] for task in final_route['tasks_completed']]
-            print("  - Tarefas a serem completadas:", ", ".join(task_texts))
-            
-        plot_final_route(router, final_route['path'], final_route['pois_info'])
+            task_names = [task['task'] for task in final_route['tasks_completed']]
+            print(f"  Tasks covered   : {', '.join(task_names)}")
+
+        plot_final_route(router, final_route['path'], final_route['pois_info'], args.output)
     else:
-        print("\nNão foi possível determinar uma rota final.")
-    
-    # Exibe relatório de timing do LLM
-    llm.print_timing_report()
+        print("\nCould not determine a final route.")
+
+    language_model.print_timing_report()
 
 
 if __name__ == "__main__":

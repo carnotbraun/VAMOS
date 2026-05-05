@@ -1,3 +1,13 @@
-offload
-.venv
-__pycache__
+offload/
+.venv/
+env/
+__pycache__/
+*.pyc
+graph_data/
+benchmark_logs/
+benchmark_full_execution_*.txt
+benchmark_summary_report.txt
+benchmark_raw_data.csv
+rota_final.png
+*.png
+!VAMOS.png
