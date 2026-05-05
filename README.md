@@ -84,7 +84,7 @@ Exemplo: para trocar a cidade, altere `routing.location` em `config.json`:
 ```json
 {
   "routing": {
-    "location": "Salvador, Brazil"
+    "location": "São Paulo, Brazil"
   }
 }
 ```
