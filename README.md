@@ -178,6 +178,24 @@ O artigo defende (Tabela 3) que a adoção de SLMs locais oferece um *overhead* 
 
 2. **Resultado esperado:** Analisando os tempos na tabela "DETAIL BY CATEGORY" dentro de `benchmark_summary_report.txt`, observar-se-ão os valores de `Avg_Time`. Os tempos reportados atestarão estabilidade absoluta por iteração, operando os processos de geração, enriquecimento e avaliação puramente *offline*.
 
+# Citação
+```bibtex
+@inproceedings{sbrc,
+ author = {Carnot Braun and Daniel Guidoni and Eduardo Cerqueira and Joahannes Costa and Leandro Villas and Allan Souza},
+ title = { Agente VAMOS! Planejamento de Rotas Veiculares Cientes de Contexto Semântico com Agentes de LLM},
+ booktitle = {Anais do XLIV Simpósio Brasileiro de Redes de Computadores e Sistemas Distribuídos},
+ location = {Praia do Forte/BA},
+ year = {2026},
+ keywords = {},
+ issn = {2177-9384},
+ pages = {57--70},
+ publisher = {SBC},
+ address = {Porto Alegre, RS, Brasil},
+ doi = {10.5753/sbrc.2026.19806},
+ url = {https://sol.sbc.org.br/index.php/sbrc/article/view/42277}
+}
+
+```
 # LICENSE
 
 Este projeto é distribuído sob a licença MIT. Para mais detalhes e permissões de replicação, consulte o ficheiro `LICENSE` na raiz do repositório.
